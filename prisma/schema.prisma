@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+}
+
+model SegmentBestWindScore {
+  id         Int      @id @default(autoincrement())
+  segmentId  String
+  score      Float
+  computedAt DateTime @default(now())
+  notes      String?
+
+  @@index([segmentId, score(sort: Desc)])
+}
