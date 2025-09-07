@@ -1,0 +1,97 @@
+name: SegmentAnalyzerBackend — Deploy App Service (Node 20)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      db_push:
+        description: "Run 'prisma db push' before deploy (first time only, safe on empty DB)"
+        required: false
+        default: "false"
+
+env:
+  NODE_VERSION: "20"
+  APP_NAME: "SegmentAnalyzerBackend" # <-- bytt til ditt App Service-navn
+  PACKAGE_PATH: "release.zip"
+
+concurrency:
+  group: segment-analyzer-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install deps (ci)
+        run: npm ci
+
+      - name: Build (includes prisma generate)
+        run: npm run build
+
+      # Valgfritt: skyv schema til PROD første gang (trygt for TOM DB)
+      - name: Prisma DB Push (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.db_push == 'true' }}
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: npx prisma db push
+
+      - name: Prune dev deps
+        run: npm prune --omit=dev
+
+      # Debug—se hva som finnes før zipping (nyttig ved feil)
+      - name: Debug tree before zipping
+        run: |
+          echo "Repo root:" && pwd
+          echo "---"
+          ls -la
+          echo "--- dist:" && ls -la dist || true
+          echo "--- prisma:" && ls -la prisma || true
+          echo "--- node_modules (top-level only):" && ls -la node_modules | head -n 50 || true
+
+      # Stage riktige filer til rot — slik at package.json havner i /home/site/wwwroot/
+      - name: Stage deploy files
+        run: |
+          rm -rf deploy
+          mkdir -p deploy
+          cp package.json deploy/
+          cp -r dist deploy/
+          cp -r node_modules deploy/
+          # Ta med prisma/ hvis du trenger schema i runtime (ofte ikke nødvendig, men skader ikke):
+          cp -r prisma deploy/ || true
+
+      # ZIP INNHOLDET av deploy/ (punktum!), ikke mappen
+      - name: Create artifact
+        run: |
+          cd deploy
+          zip -r ../${{ env.PACKAGE_PATH }} .
+          cd ..
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ${{ env.PACKAGE_PATH }}
+
+      # (Valgfritt) Ping /health etter deploy — krever at appen eksponerer /health
+      - name: Post-deploy health check
+        env:
+          APP_URL: https://${{ env.APP_NAME }}.azurewebsites.net
+        run: |
+          echo "Hitter $APP_URL/health ..."
+          curl -fsS -m 20 "$APP_URL/health" | sed 's/.*/[health] &/'
