@@ -5,6 +5,9 @@ import { httpLogger, logger } from "./logger";
 import { prisma } from "./prisma";
 
 const app = express();
+app.set("json replacer", (_key, value) =>
+  typeof value === "bigint" ? value.toString() : value
+);
 
 // CORS – tillat kun Vercel-domenet i nettleser (server-til-server uten Origin er ok)
 const allowed = env.ALLOWED_ORIGIN;
@@ -32,11 +35,22 @@ app.get("/health", async (req, res) => {
       await prisma.$queryRawUnsafe("SELECT 1");
       return res.json({ ok: true, db: "up" });
     } catch (e: any) {
-      req.log.error({ err: e }, "DB healthcheck failed");
+      // LOGG MER DETALJER TIL SERVER-LOGG
+      req.log.error(
+        {
+          err: e,
+          prismaCode: e?.code,
+          prismaClientVersion: e?.clientVersion,
+          meta: e?.meta,
+        },
+        "DB healthcheck failed"
+      );
+      // returnér en trygg, litt mer hjelpsom feilmelding til klient (uten secrets)
       return res.status(500).json({
         error: {
           code: "DB_HEALTH_FAILED",
-          message: "Database unreachable",
+          message: e?.message || "Database unreachable",
+          hint: "Sjekk SQL-auth, firewall, og DATABASE_URL",
           requestId: req.id,
         },
       });
@@ -54,21 +68,44 @@ app.get("/version", (req, res) => {
 // Eksempel-API: hent beste score for et segment
 app.get("/api/best/:segmentId", async (req, res, next) => {
   try {
-    const { segmentId } = req.params;
-    const row = await prisma.segmentBestWindScore.findFirst({
-      where: { segmentId },
-      orderBy: [{ score: "desc" }, { id: "desc" }],
-    });
-    if (!row) {
-      return res.status(404).json({
+    const raw = req.params.segmentId; // <- "632847"
+    // Sjekk at det er bare siffer
+    if (!/^\d+$/.test(raw)) {
+      return res.status(400).json({
         error: {
-          code: "NOT_FOUND",
-          message: "No score for segment",
-          requestId: req.id,
+          code: "BAD_REQUEST",
+          message: "segmentId must be digits only",
         },
       });
     }
-    return res.json({ segmentId, best: row });
+
+    // Hvis Prisma-modellen har BigInt: konverter
+    const idAsBigInt = BigInt(raw);
+
+    const row = await prisma.segmentBestWindScore.findFirst({
+      where: { segmentId: idAsBigInt as any }, // <- hvis modellfeltet er BigInt
+      orderBy: [{ bestWindScore: "desc" }],
+    });
+
+    if (!row) {
+      return res.status(404).json({
+        error: { code: "NOT_FOUND", message: "No score for segment" },
+      });
+    }
+    return res.json({ segmentId: raw, best: row });
+  } catch (e) {
+    next(e);
+  }
+});
+
+app.get("/api/users", async (req, res, next) => {
+  try {
+    const take = Math.min(
+      parseInt(String(req.query.take ?? "50"), 10) || 50,
+      200
+    );
+    const users = await prisma.user.findMany({ take, orderBy: { id: "desc" } });
+    res.json(users);
   } catch (e) {
     next(e);
   }
@@ -76,15 +113,13 @@ app.get("/api/best/:segmentId", async (req, res, next) => {
 
 // 404
 app.use((req, res) => {
-  res
-    .status(404)
-    .json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Route not found",
-        requestId: (req as any).id,
-      },
-    });
+  res.status(404).json({
+    error: {
+      code: "NOT_FOUND",
+      message: "Route not found",
+      requestId: (req as any).id,
+    },
+  });
 });
 
 // Global error handler – strukturerte 5xx

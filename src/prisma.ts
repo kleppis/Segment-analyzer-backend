@@ -1,3 +1,4 @@
+// src/prisma.ts
 import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = global as unknown as { prisma?: PrismaClient };
@@ -5,14 +6,9 @@ const globalForPrisma = global as unknown as { prisma?: PrismaClient };
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: [{ emit: "event", level: "query" }, "info", "warn", "error"],
+    log: ["info", "warn", "error"], // <-- fjern event-emitter config
   });
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
-// Optional: log queries (verbose in dev)
-prisma.$on("query", (e) => {
-  if (process.env.NODE_ENV !== "production") {
-    // console.log(`QUERY: ${e.query} -- ${e.params}`);
-  }
-});
+// (fjern prisma.$on('query', ...))

@@ -8,18 +8,17 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
+  id        BigInt   @id
+  email     String? 
   name      String?
+  stravaId  BigInt   @unique
   createdAt DateTime @default(now())
+  updatedAt DateTime
 }
 
 model SegmentBestWindScore {
-  id         Int      @id @default(autoincrement())
-  segmentId  String
-  score      Float
-  computedAt DateTime @default(now())
-  notes      String?
-
-  @@index([segmentId, score(sort: Desc)])
+  segmentId     BigInt   @id
+  bestWindScore Int
+  bestAt        DateTime
+  updatedAt     DateTime
 }
