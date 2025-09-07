@@ -5,9 +5,12 @@ import { httpLogger, logger } from "./logger";
 import { prisma } from "./prisma";
 
 const app = express();
-app.set("json replacer", (_key, value) =>
-  typeof value === "bigint" ? value.toString() : value
-);
+type JsonReplacer = (key: string, value: unknown) => unknown;
+
+const bigintReplacer: JsonReplacer = (_key, value) =>
+  typeof value === "bigint" ? value.toString() : value;
+
+app.set("json replacer", bigintReplacer);
 
 // CORS – tillat kun Vercel-domenet i nettleser (server-til-server uten Origin er ok)
 const allowed = env.ALLOWED_ORIGIN;
