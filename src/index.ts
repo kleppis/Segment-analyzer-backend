@@ -101,6 +101,65 @@ app.get("/api/best/:segmentId", async (req, res, next) => {
   }
 });
 
+app.post("/api/best/:segmentId", async (req, res, next) => {
+  try {
+    const raw = req.params.segmentId;
+    if (!/^\d+$/.test(raw)) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: "segmentId must be digits only",
+        },
+      });
+    }
+    const segId = BigInt(raw);
+
+    const bestWindScore = Number(req.body?.bestWindScore);
+    const bestAtIso = String(req.body?.bestAt || "");
+    if (!Number.isFinite(bestWindScore)) {
+      return res.status(400).json({
+        error: {
+          code: "BAD_REQUEST",
+          message: "bestWindScore must be a number",
+        },
+      });
+    }
+    const bestAt = new Date(bestAtIso);
+    if (!bestAtIso || isNaN(bestAt.getTime())) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "bestAt must be ISO datetime" },
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const current = await tx.segmentBestWindScore.findFirst({
+        where: { segmentId: segId as any },
+      });
+
+      if (!current) {
+        const created = await tx.segmentBestWindScore.create({
+          data: { segmentId: segId as any, bestWindScore, bestAt },
+        });
+        return { status: "created", best: created };
+      }
+
+      if (bestWindScore > current.bestWindScore) {
+        const updated = await tx.segmentBestWindScore.update({
+          where: { segmentId: segId as any },
+          data: { bestWindScore, bestAt },
+        });
+        return { status: "updated", best: updated };
+      }
+
+      return { status: "unchanged", best: current };
+    });
+
+    return res.json({ segmentId: raw, ...result });
+  } catch (e) {
+    next(e);
+  }
+});
+
 app.get("/api/users", async (req, res, next) => {
   try {
     const take = Math.min(
@@ -109,6 +168,51 @@ app.get("/api/users", async (req, res, next) => {
     );
     const users = await prisma.user.findMany({ take, orderBy: { id: "desc" } });
     res.json(users);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Opprett/oppdater bruker ved innlogging via Strava
+app.post("/api/users", async (req, res, next) => {
+  try {
+    const rawStravaId = req.body?.stravaId;
+    const email = typeof req.body?.email === "string" ? req.body.email : null;
+    const name = typeof req.body?.name === "string" ? req.body.name : null;
+
+    if (!rawStravaId || !/^\d+$/.test(String(rawStravaId))) {
+      return res.status(400).json({
+        error: { code: "BAD_REQUEST", message: "stravaId must be digits only" },
+      });
+    }
+    const stravaId = BigInt(String(rawStravaId));
+
+    // Upsert: bruk stravaId som primærnøkkel (id) og unik kolonne (stravaId)
+    const user = await prisma.user.upsert({
+      where: { stravaId },
+      create: {
+        id: stravaId,
+        stravaId,
+        email: email ?? undefined,
+        name: name ?? undefined,
+      },
+      update: {
+        email: email ?? undefined,
+        name: name ?? undefined,
+      },
+    });
+
+    return res.json({
+      status: "ok",
+      user: {
+        id: user.id.toString(),
+        stravaId: user.stravaId.toString(),
+        email: user.email ?? null,
+        name: user.name ?? null,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+    });
   } catch (e) {
     next(e);
   }
