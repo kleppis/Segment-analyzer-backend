@@ -13,12 +13,12 @@ model User {
   name      String?
   stravaId  BigInt   @unique
   createdAt DateTime @default(now())
-  updatedAt DateTime
+  updatedAt DateTime @updatedAt
 }
 
 model SegmentBestWindScore {
-  segmentId     BigInt   @id
-  bestWindScore Int
+  segmentId     BigInt   @unique
+  bestWindScore Float
   bestAt        DateTime
-  updatedAt     DateTime
+  updatedAt     DateTime @updatedAt
 }
